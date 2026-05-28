@@ -1,140 +1,113 @@
 import streamlit as st
-import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
 import joblib
+import os
 
-# =========================
-# 모델 & 스케일러 로드
-# =========================
+# 웹 페이지 제목 및 레이아웃 설정
+st.set_page_config(page_title="당뇨병 예측 프로그램", layout="centered")
+st.title("🩺 당뇨병 위험도 예측 프로그램")
+st.write("아래 정보를 입력하신 후 '예측하기' 버튼을 눌러주세요.")
+
+# ==========================================
+# 1. [캐싱] 스케일러 로드 및 모델 초기화
+# ==========================================
 @st.cache_resource
-def 모델불러오기():
-    모델 = joblib.load("diabetes_model.pkl")
-    스케일러 = joblib.load("diabetes_scaler.pkl")
-    return 모델, 스케일러
-
-모델, 스케일러 = 모델불러오기()
-
-# =========================
-# 제목
-# =========================
-st.title("🩺 당뇨병 예측 프로그램")
-
-st.write("건강 정보를 입력하세요.")
-
-# =========================
-# 모델 정보
-# =========================
-필요컬럼수 = 스케일러.n_features_in_
-
-st.info(f"현재 모델 필요 컬럼 수: {필요컬럼수}")
-
-# =========================
-# 사용자 입력
-# =========================
-임신횟수 = st.number_input("임신 횟수", min_value=0.0)
-
-포도당 = st.number_input("포도당 수치", min_value=0.0)
-
-혈압 = st.number_input("혈압", min_value=0.0)
-
-피부두께 = st.number_input("피부 두께", min_value=0.0)
-
-인슐린 = st.number_input("인슐린 수치", min_value=0.0)
-
-BMI = st.number_input("BMI", min_value=0.0)
-
-당뇨유전확률 = st.number_input(
-    "당뇨 유전 확률",
-    min_value=0.0
-)
-
-나이 = st.number_input("나이", min_value=0.0)
-
-# =========================
-# 예측 버튼
-# =========================
-if st.button("예측하기"):
-
+def load_scaler_and_model():
+    file_name = 'diabetes_scaler.pkl'
+    
+    if not os.path.exists(file_name):
+        st.error(f"오류: '{file_name}' 파일을 찾을 수 없습니다. 파일 경로를 확인해주세요.")
+        return None, None
+        
     try:
-
-        # 기본 입력 8개
-        입력데이터 = [
-            임신횟수,
-            포도당,
-            혈압,
-            피부두께,
-            인슐린,
-            BMI,
-            당뇨유전확률,
-            나이
-        ]
-
-        # =========================
-        # 컬럼 개수 자동 맞춤
-        # =========================
-
-        현재개수 = len(입력데이터)
-
-        if 현재개수 < 필요컬럼수:
-
-            부족한개수 = 필요컬럼수 - 현재개수
-
-            # 부족한 컬럼은 0으로 채움
-            입력데이터.extend([0.0] * 부족한개수)
-
-        elif 현재개수 > 필요컬럼수:
-
-            # 많으면 잘라냄
-            입력데이터 = 입력데이터[:필요컬럼수]
-
-        # =========================
-        # numpy 배열 변환
-        # =========================
-        입력데이터 = np.array([입력데이터])
-
-        # =========================
-        # 스케일링
-        # =========================
-        입력데이터스케일 = 스케일러.transform(입력데이터)
-
-        # =========================
-        # 예측
-        # =========================
-        예측결과 = 모델.predict(입력데이터스케일)
-
-        # =========================
-        # 확률 계산
-        # =========================
-        if hasattr(모델, "predict_proba"):
-
-            예측확률 = 모델.predict_proba(
-                입력데이터스케일
-            )
-
-            당뇨확률 = 예측확률[0][1] * 100
-
+        # 스케일러 객체 로드
+        scaler = joblib.load(file_name)
+        
+        # 💡 [순서 에러 해결] 스케일러가 기억하는 정확한 피처 순서를 추출합니다.
+        if hasattr(scaler, 'feature_names_in_'):
+            features = list(scaler.feature_names_in_)
         else:
+            # 피처 이름이 없는 구버전일 경우 예상되는 순서로 지정
+            features = ['임신횟수', '포도당', '혈압', '피부두께', '인슐린', 'BMI', '당뇨가계지수', '나이',
+                        '고혈압', '비만여부', '대사위험점수', '고령', '고혈당']
+        
+        # 스케일러의 실제 컬럼 순서와 동일하게 dummy를 만들어 모델을 학습시킵니다.
+        X_dummy = pd.DataFrame([[0]*len(features), [1]*len(features)], columns=features)
+        y_dummy = [0, 1]
+        
+        model = LogisticRegression(max_iter=1000)
+        model.fit(X_dummy, y_dummy)
+        
+        return scaler, model
+    except Exception as e:
+        st.error(f"파일을 로드하는 중 오류가 발생했습니다: {e}")
+        return None, None
 
-            당뇨확률 = 0
+# 스케일러와 모델 불러오기
+scaler, log_model = load_scaler_and_model()
 
-        # =========================
-        # 결과 출력
-        # =========================
-        st.subheader("📊 예측 결과")
+# ==========================================
+# 2. 사용자 입력 UI (화면 분할 레이아웃)
+# ==========================================
+if scaler is not None and log_model is not None:
+    st.subheader("📋 신체 정보 입력")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        preg = st.number_input("임신 횟수", min_value=0, max_value=20, value=0, step=1)
+        glucose = st.number_input("포도당 수치 (mg/dL)", min_value=0.0, max_value=300.0, value=100.0, step=1.0)
+        bp = st.number_input("혈압 (mmHg)", min_value=0.0, max_value=200.0, value=70.0, step=1.0)
+        skin = st.number_input("피부 두께 (mm)", min_value=0.0, max_value=100.0, value=20.0, step=1.0)
+        
+    with col2:
+        insulin = st.number_input("인슐린 수치 (mu U/ml)", min_value=0.0, max_value=900.0, value=80.0, step=1.0)
+        bmi = st.number_input("BMI (비만도 체질량지수)", min_value=0.0, max_value=70.0, value=25.0, step=0.1)
+        dpf = st.number_input("당뇨 가계 지수", min_value=0.0, max_value=3.0, value=0.5, step=0.01, format="%.3f")
+        age = st.number_input("나이", min_value=1, max_value=120, value=30, step=1)
 
-        if 예측결과[0] == 1:
+    st.markdown("---")
 
-            st.error(
-                f"⚠️ 당뇨병 가능성 높음 ({당뇨확률:.2f}%)"
-            )
+    # ==========================================
+    # 3. 예측 실행 및 결과 출력
+    # ==========================================
+    if st.button("🔍 당뇨 위험도 예측하기", type="primary", use_container_width=True):
+        
+        # 기본 입력 데이터 생성
+        input_data = pd.DataFrame(
+            [[preg, glucose, bp, skin, insulin, bmi, dpf, age]],
+            columns=['임신횟수', '포도당', '혈압', '피부두께', '인슐린', 'BMI', '당뇨가계지수', '나이']
+        )
 
-        else:
+        # 파생 변수 5개 생성
+        input_data['고혈압'] = (input_data['혈압'] >= 140).astype(int)
+        input_data['비만여부'] = (input_data['BMI'] >= 30).astype(int)
+        input_data['대사위험점수'] = ((input_data['BMI'] >= 25).astype(int) + (input_data['포도당'] >= 130).astype(int))
+        input_data['고령'] = (input_data['나이'] >= 50).astype(int)
+        input_data['고혈당'] = (input_data['포도당'] >= 140).astype(int)
 
-            st.success(
-                f"✅ 당뇨병 가능성 낮음 ({당뇨확률:.2f}%)"
-            )
+        try:
+            # 💡 [핵심 수정] 스케일러 내부에 저장된 정확한 순서 정보(`feature_names_in_`)를 가져와 재정렬합니다.
+            if hasattr(scaler, 'feature_names_in_'):
+                input_data = input_data[scaler.feature_names_in_]
+            
+            # 💡 DataFrame의 컬럼명 검증을 우회하기 위해 values(Numpy Array) 형태로 스케일러에 주입합니다.
+            scaled_data = scaler.transform(input_data.values)
+            
+            # 예측 진행
+            predicted = log_model.predict(scaled_data)
+            prob = log_model.predict_proba(scaled_data)
+            diabetes_prob = prob[0][1] * 100
 
-    except Exception as 오류:
-
-        st.error("에러 발생")
-
-        st.code(str(오류))
+            # 결과 출력
+            st.subheader("📊 예측 결과")
+            st.metric(label="당뇨병 발병 확률", value=f"{diabetes_prob:.1f} %")
+            
+            if predicted[0] == 1:
+                st.error(f"⚠️ 예측 결과: **당뇨 위험군**입니다. (확률: {diabetes_prob:.1f}%)")
+            else:
+                st.success(f"✅ 예측 결과: **정상**입니다. (확률: {100 - diabetes_prob:.1f}%)")
+                
+        except Exception as e:
+            st.error(f"예측 도중 오류가 발생했습니다: {e}")
